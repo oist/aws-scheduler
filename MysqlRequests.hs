@@ -11,7 +11,7 @@ import Database.HDBC.MySQL as M
 sql_timeslot = "SELECT slot_id FROM timeslot ORDER BY date, timeslot.from"
 sql_faculty  = "SELECT faculty_id, name, building FROM faculty"
 sql_students = "SELECT embark_id, name FROM student"
-sql_unavail  = "SELECT timeslot, faculty indepth FROM matrix WHERE student LIKE \"X%\""
+sql_unavail  = "SELECT timeslot, faculty FROM matrix WHERE student LIKE \"X%\""
 
 -- extraction from database
 
