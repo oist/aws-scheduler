@@ -21,7 +21,7 @@ conn = defaultMySQLConnectInfo {
                        mysqlPort     = 3306,
                        mysqlUser     = "jie",
                        mysqlPassword = "jie",
-                       mysqlDatabase = "matrixJun16",
+                       mysqlDatabase = "matrixFeb17",
                        mysqlUnixSocket = "/tmp/mysql.sock"
                     }
 
@@ -39,7 +39,7 @@ faculty = do conn <- connectMySQL conn
              return $ extract sql
       where extract = map (\[a,b,c] -> (fromSql a, fromSql b,fromSql c) )
 
-students :: IO [(Int, String)] -- stu ID, name
+students :: IO [(String, String)] -- stu ID, name
 students = do conn <- connectMySQL conn
               sql <- quickQuery' conn sql_students []
               return $ extract sql
