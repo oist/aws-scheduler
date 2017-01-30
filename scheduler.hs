@@ -41,32 +41,32 @@ type StufList = [Stu]
 makeMatrix :: String -> RawProf -> RawStu ->  M.Map String [[Int]]  -- Input: csv, output: list of (Stu name, [Prof !name])
 makeMatrix csv prof stu = M.fromList $ matrixToIndices prof stu (strToMat csv)
   where strToMat s = map listToMat $ map (splitOn ",") $ tail $ (splitOn "\r\n")  s
-        listToMat (l:f:xs) = (l++", "++f,
+        listToMat (sID:xs) = (sID,
                            [map (profIndex M.!) $ findIndices (== "1") xs , -- Interview
                             map (profIndex M.!) $ findIndices (== "2") xs ]) -- In-Depth interview
-        profIndex =  M.fromList $ zip [0..] $ drop 2 $  splitOn "," $ head $ (splitOn "\r\n") csv
+        profIndex =  M.fromList $ zip [0..] $ tail $  splitOn "," $ head $ (splitOn "\r\n") csv
 
 -- Intermediate function for makeMatrix: looks up IDs fro names (things go wrong here!)
 matrixToIndices :: RawProf -> RawStu -> [(String, [[String]])] -> [(String, [[Int]])]
 matrixToIndices _ _ [] = []
 matrixToIndices p s ((st,[ints,ids]):ms) = student : matrixToIndices p s ms
-  where student = (getSt st, [map getPr ints,map getPr ids] )
-        getSt st = case find (\x -> (cap $ snd x) == cap st) s of
+  where student = (getSt st, [map getPr ints, map getPr ids] )
+        getSt st = case find (\(x,_) -> format x == format st) s of
                         Just (sid, _) -> sid
                         Nothing -> "-1"
-        getPr pr = case find (\(_,name,_) -> cap name == cap pr) p of
+        getPr pr = case find (\(_,name,_) -> format name == format pr) p of
                               Just (pid,_,_) -> pid
                               Nothing -> -1
-        cap = concat . words . map toUpper
+        format = concat . words . map toUpper
 
 -- Tests which names do not match between the Excel file and the BD
 unmatchedNames :: String -> RawProf -> RawStu -> [String]
 unmatchedNames csv prof stu = (filter noPr profNames) ++ (filter noSt stuNames)
- where profNames = drop 2 $  splitOn "," $ head $ (splitOn "\r\n") csv
-       stuNames = map (intercalate ", " . take 2) $ map (splitOn ",") $ tail $ (splitOn "\r\n") csv
-       noSt st = (find (\x -> (cap $ snd x) == cap st) stu) == Nothing
-       noPr pr = (find (\(_,name,_) -> cap name == cap pr) prof) == Nothing
-       cap = concat . words . map toUpper
+ where profNames = tail $ splitOn "," $ head $ (splitOn "\r\n") csv
+       stuNames = map (takeWhile (/=',')) $ tail $ (splitOn "\r\n") csv
+       noSt st = (find (\(x,_) -> format x == format st) stu) == Nothing
+       noPr pr = (find (\(_,name,_) -> format name == format pr) prof) == Nothing
+       format = concat . words . map toUpper
 
 -- switches the DB index to the chronological index in the list of anavailabilities
 unavailChron :: M.Map Int Int -> RawUnavail -> RawUnavail
