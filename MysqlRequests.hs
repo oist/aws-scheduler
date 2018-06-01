@@ -15,38 +15,47 @@ sql_unavail  = "SELECT timeslot, faculty FROM matrix WHERE student LIKE \"X%\""
 
 -- extraction from database
 
-conn :: MySQLConnectInfo
-conn = defaultMySQLConnectInfo {
-                       mysqlHost     = "localhost",
-                       mysqlPort     = 3306,
-                       mysqlUser     = "jie",
-                       mysqlPassword = "jie",
-                       mysqlDatabase = "matrixFeb17",
-                       mysqlUnixSocket = "/tmp/mysql.sock"
-                    }
+-- Get connection info (username, password...) from config file
+getConnectionInfo :: IO MySQLConnectInfo
+getConnectionInfo = do
+  txt <- readFile "Mysql.config"
+  let [h, u, p, d] = map (last . words) $ lines txt
+  return defaultMySQLConnectInfo
+           { mysqlHost = h
+           , mysqlUser = u
+           , mysqlPassword = p
+           , mysqlDatabase = d
+           }
 
-timeslot :: IO [(Int, Int)] -- index and database slot ID
-timeslot = do conn <- connectMySQL conn
-              sql <- quickQuery' conn sql_timeslot []
-              return $ extract sql
---      where extract = flip zip [0..] . map (fromSql . head ) Real chronological order
+timeslot' :: IO [(Int, Int)] -- index and database slot ID
+timeslot' = do info <- getConnectionInfo
+               conn <- connectMySQL info
+               extract <$> quickQuery' conn sql_timeslot []
       where extract = flip zip [0..] . switch4 . map (fromSql . head ) -- First day (4 sessions) pushed at the back
             switch4 x = let (a,b) = splitAt 4 x in b ++ a
 
-faculty :: IO [(Int, String, String)] -- prof ID, name, lab
-faculty = do conn <- connectMySQL conn
-             sql <- quickQuery' conn sql_faculty []
-             return $ extract sql
-      where extract = map (\[a,b,c] -> (fromSql a, fromSql b,fromSql c) )
+timeslot :: IO [(Int, Int)] -- (cheating) index and database slot ID
+timeslot = return $ zip order [0..]
+        -- order is mixed: Tuesday first, first AM/PM sessions first...
+  where order = [5, 9, 6, 10, 7, 11, 8, 12, 13, 14, 15, 22] ++ [16..21] ++ [1..4]
+
+faculty :: IO [(String, String, String)] -- prof ID, name, lab
+faculty = do info <- getConnectionInfo
+             conn <- connectMySQL info
+             map extract <$> quickQuery' conn sql_faculty []
+      where extract :: [SqlValue] -> (String, String, String)
+            extract [a,b,c] = (fromSql a, fromSql b,fromSql c)
 
 students :: IO [(String, String)] -- stu ID, name
-students = do conn <- connectMySQL conn
-              sql <- quickQuery' conn sql_students []
-              return $ extract sql
-      where extract = map (\[a,b] -> (fromSql a, fromSql b) )
+students = do info <- getConnectionInfo
+              conn <- connectMySQL info
+              map extract <$> quickQuery' conn sql_students []
+      where extract :: [SqlValue] -> (String, String)
+            extract [a,b] = (fromSql a, fromSql b)
 
-unavail :: IO [(Int, Int)] -- slot ID, prof ID
-unavail = do conn <- connectMySQL conn
-             sql <- quickQuery' conn sql_unavail []
-             return $ extract sql
-      where extract =  map (\[a,b] -> (fromSql a, fromSql b) )
+unavail :: IO [(Int, String)] -- slot ID, prof ID
+unavail = do info <- getConnectionInfo
+             conn <- connectMySQL info
+             map extract <$> quickQuery' conn sql_unavail []
+      where extract :: [SqlValue] -> (Int, String)
+            extract [a,b] = (fromSql a, fromSql b)
