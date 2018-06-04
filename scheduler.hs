@@ -143,8 +143,8 @@ checkIDs = do
     else putStrLn "Could not find a match in the DB for the following IDs:"
   mapM_ print unmatched
 
-inputFile  = "Intput_Output/IM_Jun18.csv"
-outPutFile = "Intput_Output/schedule_Jun18.csv"
+inputFile  = "Input_Output/IM_Jun18.csv"
+outPutFile = "Input_Output/schedule_Jun18.csv"
 
 -- Build the schedule
 main :: IO ()
