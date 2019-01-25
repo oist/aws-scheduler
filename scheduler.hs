@@ -1,12 +1,13 @@
-import qualified Data.Map as M (fromList, adjust, lookup, keys, member)
+import qualified Data.Map as M
 import Data.Map (Map, (!))
-import Data.List (findIndices, (\\), sortBy, sort, find, intercalate, sortOn)
+import Data.List (findIndices, (\\), sortBy, sort, find, intercalate, sortOn, group)
 import Data.List.Split (splitOn)
 import Data.Char (toUpper)
 import Data.Function (on)
 import Data.Tuple (swap)
 import System.IO
 import MysqlRequests
+import System.Random
 
 -------------------- NEW DATA TYPES --------------------
 
@@ -22,7 +23,8 @@ data Stu = Stu {sName::String,
                 sID::String,
                 sIDInterview::[String],
                 sInterview::[String],
-                sBusy::[Int]
+                sBusy::[Int],
+                set::[Int]
                 } deriving (Show, Eq)
 
 -------------------- NEW TYPES SYNONYMS --------------------
@@ -62,10 +64,10 @@ unmatchedNames csv prof stu = (filter noPr profNames) ++ (filter noSt stuNames)
  where profNames = tail $ splitOn "," $ head $ (splitOn newLine) csv
        stuNames = map (takeWhile (/=',')) $ tail $ (splitOn newLine) csv
        noSt st = (find (\(x,_) -> format x == format st) stu) == Nothing
-       noPr pr = (find (\(pid,_,_) -> show pid == format pr) prof) == Nothing
+       noPr pr = (find (\(pid,_,_) -> pid == format pr) prof) == Nothing
        format = concat . words . map toUpper
 
--- switches the DB index to the chronological index in the list of anavailabilities
+-- switches the DB index to the chronological index in the list of unavailabilities
 unavailChron :: Map Int Int -> RawUnavail -> RawUnavail
 unavailChron ts = map (\(i, p) -> (ts!i , p))
 
@@ -86,29 +88,49 @@ makeStu m p stu = map listToStu stu
   where listToStu (sid,name) =
              Stu { sName = name,
                    sID = sid,
-                   sIDInterview = sortOn (lab . (p!)) (last $ m!sid), -- ordering by lab to try to bunch interviews
-                   sInterview = sortOn (lab . (p!)) (head $ m!sid),
-                   sBusy = []}
+                   -- sIDInterview = sortOn (lab . (p!)) (last $ m!sid), -- ordering by lab to try to bunch interviews
+                   -- sInterview = sortOn (lab . (p!)) (head $ m!sid),
+                   sIDInterview = shuffle name (last $ m!sid),
+                   sInterview = shuffle sid (head $ m!sid),
+                   sBusy = [],
+                   set = []
+                 }
+        shuffle str lst = fst $ fisherYates lst (mkStdGen $ hashString str)
+
+hashString :: String -> Int
+hashString = foldr1 (subtract) . map fromEnum
+
+fisherYates :: RandomGen g => [a] -> g -> ([a], g)
+fisherYates a gen = shuffle 1 gen m
+  where m = M.fromList $ zip [1..] a
+        shuffle i g k
+          | i == M.size m = (M.elems k, g)
+          | otherwise     = let (j, g') = randomR (i, M.size m) g
+                                k' = M.insert i (k!j) $ M.insert j (k!i) k
+                            in shuffle (i+1) g' k'
 
 -- Finds a suitable schedule from inversed timeslots [(chron indec, DB index)], Prof and Stu
 findSchedule :: Map Int Int -> ProfList -> StufList -> Schedule
-findSchedule ts p ((Stu name sid intID (int:ints) busy): ss)
+findSchedule ts p ((Stu name sid intID (int:ints) busy set): ss)
   | null poss            = []                                 -- No possibilities, fail the branch
   | null ss && null ints = [solution]                         -- last student, last interview
   | length intID==1      = solution: findSchedule ts newp (ss++[news]) -- last in-depth interview, go to next student and put normal interviews at the back
-  | null ints            = solution: findSchedule ts newp ss  -- last interview, go to next student
+  | null ints && null nextStu = []
+  | null ints            = solution: nextStu  -- last interview, go to next student
   | not $ null next      = solution: next                     -- possible solution, go with that
   | otherwise            = findSchedule ts p (busys:ss)       -- try again at a different time
     where i = if null intID then int else head intID          -- picks in-depth interview first if there is one
           poss = (M.keys ts) \\ (busy ++ pBusy (p!i))     -- possible times (all timeslots minus prof and student busy times)
+          poss1 = head poss
           isIDInt = if null intID then "" else "ID"           -- adding "ID" if it is in-depth interview
-          solution = (ts!(head poss), pID (p!i), sid, isIDInt) -- element of schedule (timeslot, prod ID, stu ID,in depth?)
-          next = findSchedule ts newp (news:ss)               -- Rest of the schedule if the first possibility is chosen
-          newp = M.adjust (\l -> l{pBusy=(head poss):pBusy l } ) i p -- adding busy time for prof
+          solution = (ts!poss1, pID (p!i), sid, isIDInt) -- element of schedule (timeslot, prof ID, stu ID,in depth?)
+          nextStu = findSchedule ts newp ss
+          next = findSchedule ts newp (ss++[news])               -- Rest of the schedule if the first possibility is chosen
+          newp = M.adjust (\l -> l{pBusy=poss1:pBusy l } ) i p -- adding busy time for prof
           news = if null intID
-                 then Stu name sid intID ints ((head poss):busy) -- Adding busy time and prepping for next interview
-                 else Stu name sid (tail intID) (int:ints) ((head poss):busy) -- for either in-depth or normal
-          busys = Stu name sid intID (int:ints) ((head poss):busy) -- Adding busy time and trying again same interview
+                 then Stu name sid intID ints (poss1:set) (poss1:set) -- Adding busy time and prepping for next interview
+                 else Stu name sid (tail intID) (int:ints) (poss1:set) (poss1:set)-- for either in-depth or normal
+          busys = Stu name sid intID (int:ints) (poss1:busy) set -- Adding busy time and trying again same interview
 
 -- Transforms the schedule into mysql readable csv
 formatCSV :: Schedule -> String
@@ -118,18 +140,17 @@ formatCSV s = unlines $ line1 : (map breakSchedule s)
         line1 = "\"id\",\"timeslot\",\"student\",\"faculty\",\"indepth\",\"comment\",\"ts\""
 
 newLine :: String
-newLine = "\r\n"
+newLine = "\n"
 
 -------------------- CHECKS AND MAIN --------------------
 
 -- Prints all values from SQL query
 checkDB :: IO ()
 checkDB = do
-  print <$> timeslot
-  print <$> faculty
-  print <$> students
-  print <$> unavail
-  return ()
+  timeslot >>= print
+  faculty >>= print
+  students >>= print
+  unavail >>= print
 
 -- Checks for unmatched names between Excel/CSV file and DB
 checkIDs :: IO ()
@@ -143,12 +164,26 @@ checkIDs = do
     else putStrLn "Could not find a match in the DB for the following IDs:"
   mapM_ print unmatched
 
-inputFile  = "Input_Output/IM_Jun18.csv"
-outPutFile = "Input_Output/schedule_Jun18.csv"
+-- Checks the number of free spots compared to number of interviews
+checkAvail :: IO ()
+checkAvail = do
+  u <- unavail
+  m <- readFile inputFile
+  let count = filter (\(_,c)->c>0) $ map (\g -> (head g, 22 - length g)) $ group $ sort $ map snd u
+      r@(ids: rows) = map (tail . splitOn ",") $ splitOn newLine m
+      replace = filter (not . null) . zipWith (\i c -> if null c then c else i) ids
+      count' = map (\g -> (head g, length g - 1)) $ group $ sort $ concatMap replace r
+      check = zipWith (\(i, c) (i', c') -> i==i' && c>=c') count count'
+  if all id check
+    then putStrLn "Availabilities match"
+    else putStrLn "Errors" >> (print $ zip3 count count' check)
+
+inputFile  = "Input_Output/IM_Feb19.csv"
+outPutFile = "Input_Output/schedule_Feb19.csv"
 
 -- Build the schedule
-main :: IO ()
-main = do
+makeSchedule :: IO Schedule
+makeSchedule = do
   t <- timeslot
   f <- faculty
   s <- students
@@ -159,4 +194,8 @@ main = do
       prof = makeProf uc f
       stu = makeStu matrix prof s
       schedule = findSchedule (M.fromList $ map swap t) prof stu
-  writeFile outPutFile (formatCSV schedule)
+  return schedule
+--  writeFile outPutFile (formatCSV schedule)
+
+main :: IO ()
+main = makeSchedule >>= update

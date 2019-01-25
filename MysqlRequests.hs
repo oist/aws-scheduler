@@ -1,9 +1,9 @@
-module MysqlRequests (timeslot, faculty, students, unavail)
+module MysqlRequests (timeslot, faculty, students, unavail, update)
 where
 
 import Control.Monad
 import Database.HDBC
-import Database.HDBC.SqlValue as S
+--import Database.HDBC.SqlValue as S
 import Database.HDBC.MySQL as M
 
 -- mysql requests
@@ -59,3 +59,16 @@ unavail = do info <- getConnectionInfo
              map extract <$> quickQuery' conn sql_unavail []
       where extract :: [SqlValue] -> (Int, String)
             extract [a,b] = (fromSql a, fromSql b)
+
+update :: [(Int, String, String, String)] -> IO ()
+update updt = do
+  info <- getConnectionInfo
+  conn <- connectMySQL info
+  stmt <-
+    prepare
+     conn
+     "INSERT INTO matrix set student = ?, indepth = ?, timeslot = ?, faculty = ?;"
+  executeMany stmt $
+      map (\(ts, fac, st, depth) -> [toSql st, toSql depth, toSql ts, toSql fac]) updt
+  commit conn
+  disconnect conn
