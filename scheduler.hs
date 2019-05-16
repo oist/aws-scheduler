@@ -1,6 +1,6 @@
 import qualified Data.Map as M
 import Data.Map (Map, (!))
-import Data.List (findIndices, (\\), sortBy, sort, find, intercalate, sortOn, group)
+import Data.List (findIndices, (\\), sortBy, sort, find, intercalate, sortOn, group, lookup)
 import Data.List.Split (splitOn)
 import Data.Char (toUpper)
 import Data.Function (on)
@@ -98,7 +98,7 @@ makeStu m p stu = map listToStu stu
         shuffle str lst = fst $ fisherYates lst (mkStdGen $ hashString str)
 
 hashString :: String -> Int
-hashString = foldr1 (subtract) . map fromEnum
+hashString = foldr1 (*) . map fromEnum
 
 fisherYates :: RandomGen g => [a] -> g -> ([a], g)
 fisherYates a gen = shuffle 1 gen m
@@ -168,18 +168,30 @@ checkIDs = do
 checkAvail :: IO ()
 checkAvail = do
   u <- unavail
-  m <- readFile inputFile
-  let count = filter (\(_,c)->c>0) $ map (\g -> (head g, 22 - length g)) $ group $ sort $ map snd u
-      r@(ids: rows) = map (tail . splitOn ",") $ splitOn newLine m
+  csv <- readFile inputFile
+  let count = filter ((>0) . snd) . map (\g -> (head g, 12 - length g)) .
+              group . sort . map snd $ u
+      r@(ids: _) = map (tail . splitOn ",") $ splitOn newLine csv
       replace = filter (not . null) . zipWith (\i c -> if null c then c else i) ids
       count' = map (\g -> (head g, length g - 1)) $ group $ sort $ concatMap replace r
-      check = zipWith (\(i, c) (i', c') -> i==i' && c>=c') count count'
-  if all id check
+      check (i, c) = do
+        c' <- lookup i count
+        if c <= c' then Nothing else Just (i, c, c')
+  if all ((==Nothing) . check) count'
     then putStrLn "Availabilities match"
-    else putStrLn "Errors" >> (print $ zip3 count count' check)
+    else do
+      putStrLn "Errors: \nFrom database:"
+      print count
+      putStrLn "From CSV:"
+      print count'
+      putStrLn "Mismatch:"
+      print $ filter (/= Nothing) $ map check count'
 
-inputFile  = "Input_Output/IM_Feb19.csv"
-outPutFile = "Input_Output/schedule_Feb19.csv"
+
+
+
+inputFile  = "Input_Output/IM_Jun19.csv"
+outPutFile = "Input_Output/schedule_Jun19.csv"
 
 -- Build the schedule
 makeSchedule :: IO Schedule
@@ -194,8 +206,8 @@ makeSchedule = do
       prof = makeProf uc f
       stu = makeStu matrix prof s
       schedule = findSchedule (M.fromList $ map swap t) prof stu
+  writeFile outPutFile (formatCSV schedule)
   return schedule
---  writeFile outPutFile (formatCSV schedule)
 
 main :: IO ()
 main = makeSchedule >>= update

@@ -37,7 +37,8 @@ timeslot' = do info <- getConnectionInfo
 timeslot :: IO [(Int, Int)] -- (cheating) index and database slot ID
 timeslot = return $ zip order [0..]
         -- order is mixed: Tuesday first, first AM/PM sessions first...
-  where order = [5, 9, 6, 10, 7, 11, 8, 12, 13, 14, 15, 22] ++ [16..21] ++ [1..4]
+  -- where order = [5, 9, 6, 10, 7, 11, 8, 12, 13, 14, 15, 22] ++ [16..21] ++ [1..4]
+  where order = [5, 9, 6, 10, 7, 11, 8, 12] ++ [16..19]
 
 faculty :: IO [(String, String, String)] -- prof ID, name, lab
 faculty = do info <- getConnectionInfo
