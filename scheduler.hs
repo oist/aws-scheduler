@@ -21,7 +21,6 @@ data Prof = Prof {pName::String,
 -- Students: name, ID, list of prof pID for interview , In-Depth interview, index of busy timeslots
 data Stu = Stu {sName::String,
                 sID::String,
-                sIDInterview::[String],
                 sInterview::[String],
                 sBusy::[Int],
                 set::[Int]
@@ -30,30 +29,27 @@ data Stu = Stu {sName::String,
 -------------------- NEW TYPES SYNONYMS --------------------
 
 -- Interview Schedule: time slot, prof ID, student ID, in-depth
-type Schedule =  [(Int, String, String, String)]
+type Schedule =  [(Int, String, String)]
 type RawProf = [(String, String, String)] -- prof ID, name, lab
 type RawStu = [(String, String)] -- stu ID, name
 type RawTimseslot = [(Int, Int)] -- DB slot index, chronological index
 type RawUnavail = [(Int, String)] -- DB slot index, prof ID
 type ProfList = Map String Prof
-type StufList = [Stu]
+type StuList = [Stu]
 
 -------------------- FUNCTIONS --------------------
 
 -- Transforms input from Excel/CSV matrix file into Strings
-makeMatrix :: String -> RawProf -> RawStu ->  Map String [[String]]  -- Input: csv, output: list of (Stu name, [Prof !name])
+makeMatrix :: String -> RawProf -> RawStu ->  Map String [String]  -- Input: csv, output: list of (Stu name, [Prof !name])
 makeMatrix csv prof stu = M.fromList $ matrixToIndices prof stu (strToMat csv)
   where strToMat = map listToMat . map (splitOn ",") . tail . (splitOn newLine)
-        listToMat (sID:xs) = (sID
-                             , map (profIndex!) $ findIndices (== "1") xs -- Interview
-                             , map (profIndex!) $ findIndices (== "2") xs -- In-Depth interview
-                             )
+        listToMat (sID:xs) = (sID , map (profIndex!) $ findIndices (== "1") xs)
         profIndex =  M.fromList $ zip [0..] $ tail $  splitOn "," $ head $ (splitOn newLine) csv
 
 -- Intermediate function for makeMatrix: looks up IDs from names (things go wrong here!)
-matrixToIndices :: RawProf -> RawStu -> [(String, [String], [String])] -> [(String, [[String]])]
+matrixToIndices :: RawProf -> RawStu -> [(String, [String])] -> [(String, [String])]
 matrixToIndices p s = map toStudent
-  where toStudent (st,ints,ids) = (getSt st, [map getPr ints, map getPr ids])
+  where toStudent (st,ints) = (getSt st, map getPr ints)
         getSt st = maybe "-1" (const st) $ find (\(x,_) -> format x == format st) s
         getPr pr = maybe "-1" (const pr) $ find (\(p,_,_) -> format p == format pr) p
         format = concat . words
@@ -83,15 +79,12 @@ makeProf unav = M.fromList . map (listToProf unav)
                     } )
 
 -- Builds a list of Stu from Excel/CSV matrix info and SQL requests results
-makeStu :: Map String [[String]] -> ProfList -> RawStu  -> StufList
+makeStu :: Map String [String] -> ProfList -> RawStu  -> StuList
 makeStu m p stu = map listToStu stu
   where listToStu (sid,name) =
              Stu { sName = name,
                    sID = sid,
-                   -- sIDInterview = sortOn (lab . (p!)) (last $ m!sid), -- ordering by lab to try to bunch interviews
-                   -- sInterview = sortOn (lab . (p!)) (head $ m!sid),
-                   sIDInterview = shuffle name (last $ m!sid),
-                   sInterview = shuffle sid (head $ m!sid),
+                   sInterview = shuffle sid (m!sid),
                    sBusy = [],
                    set = []
                  }
@@ -109,34 +102,29 @@ fisherYates a gen = shuffle 1 gen m
                                 k' = M.insert i (k!j) $ M.insert j (k!i) k
                             in shuffle (i+1) g' k'
 
--- Finds a suitable schedule from inversed timeslots [(chron indec, DB index)], Prof and Stu
-findSchedule :: Map Int Int -> ProfList -> StufList -> Schedule
-findSchedule ts p ((Stu name sid intID (int:ints) busy set): ss)
+findSchedule :: Map Int Int -> ProfList -> StuList -> Schedule
+findSchedule ts p ((Stu name sid (int:ints) busy set): ss)
   | null poss            = []                                 -- No possibilities, fail the branch
   | null ss && null ints = [solution]                         -- last student, last interview
-  | length intID==1      = solution: findSchedule ts newp (ss++[news]) -- last in-depth interview, go to next student and put normal interviews at the back
-  | null ints && null nextStu = []
-  | null ints            = solution: nextStu  -- last interview, go to next student
+  | null ints && null nextStu = []                            -- Next students has no possibility, fail the branch
+  | null ints            = solution: nextStu                  -- last interview, go to next student
   | not $ null next      = solution: next                     -- possible solution, go with that
   | otherwise            = findSchedule ts p (busys:ss)       -- try again at a different time
-    where i = if null intID then int else head intID          -- picks in-depth interview first if there is one
-          poss = (M.keys ts) \\ (busy ++ pBusy (p!i))     -- possible times (all timeslots minus prof and student busy times)
+    where poss = (M.keys ts) \\ (busy ++ pBusy (p!int))       -- possible times (all timeslots minus prof and student busy times)
           poss1 = head poss
-          isIDInt = if null intID then "" else "ID"           -- adding "ID" if it is in-depth interview
-          solution = (ts!poss1, pID (p!i), sid, isIDInt) -- element of schedule (timeslot, prof ID, stu ID,in depth?)
+          solution = (ts!poss1, pID (p!int), sid)             -- element of schedule (timeslot, prof ID, stu ID,in depth?)
           nextStu = findSchedule ts newp ss
-          next = findSchedule ts newp (ss++[news])               -- Rest of the schedule if the first possibility is chosen
-          newp = M.adjust (\l -> l{pBusy=poss1:pBusy l } ) i p -- adding busy time for prof
-          news = if null intID
-                 then Stu name sid intID ints (poss1:set) (poss1:set) -- Adding busy time and prepping for next interview
-                 else Stu name sid (tail intID) (int:ints) (poss1:set) (poss1:set)-- for either in-depth or normal
-          busys = Stu name sid intID (int:ints) (poss1:busy) set -- Adding busy time and trying again same interview
+          next = findSchedule ts newp (ss++[news])            -- Rest of the schedule if the first possibility is chosen
+          newp = M.adjust (\l -> l{pBusy = poss1: pBusy l } ) int p -- adding busy time for prof
+          news = Stu name sid ints (poss1:set) (poss1:set)    -- Adding busy time and prepping for next interview
+          busys = Stu name sid (int:ints) (poss1:busy) set    -- Adding busy time and trying again same interview
+
 
 -- Transforms the schedule into mysql readable csv
 formatCSV :: Schedule -> String
 formatCSV s = unlines $ line1 : (map breakSchedule s)
-  where breakSchedule = \(ts,pid,sid,depth)
-             -> intercalate "\",\"" ["\"0",show ts, sid, pid,depth,"","\""]
+  where breakSchedule = \(ts,pid,sid)
+             -> intercalate "\",\"" ["\"0",show ts, sid, pid,"","","\""]
         line1 = "\"id\",\"timeslot\",\"student\",\"faculty\",\"indepth\",\"comment\",\"ts\""
 
 newLine :: String
